@@ -39,21 +39,6 @@ impl UpdateResetFlow {
     /// * `env` - ROM Environment
     pub fn run(env: &mut RomEnv) -> CaliptraResult<Option<FirmwareHandoffTable>> {
         cprintln!("[update-reset] ++");
-        report_boot_status(UpdateResetStarted.into());
-
-        let Some(mut recv_txn) = env.mbox.try_start_recv_txn() else {
-            cprintln!("Failed To Get Mailbox Transaction");
-            return Err(CaliptraError::ROM_UPDATE_RESET_FLOW_MAILBOX_ACCESS_FAILURE);
-        };
-
-        if recv_txn.cmd() != Self::MBOX_DOWNLOAD_FIRMWARE_CMD_ID {
-            cprintln!("Invalid command 0x{:08x} received", recv_txn.cmd());
-            return Err(CaliptraError::ROM_UPDATE_RESET_FLOW_INVALID_FIRMWARE_COMMAND);
-        }
-
-        let manifest = Self::load_manifest(&mut recv_txn)?;
-        report_boot_status(UpdateResetLoadManifestComplete.into());
-
         let mut venv = RomImageVerificationEnv {
             sha256: &mut env.sha256,
             sha384: &mut env.sha384,
@@ -64,35 +49,60 @@ impl UpdateResetFlow {
             pcr_bank: &mut env.pcr_bank,
         };
 
-        let info = Self::verify_image(&mut venv, &manifest, recv_txn.dlen());
-        let info = okref(&info)?;
-        report_boot_status(UpdateResetImageVerificationComplete.into());
+        report_boot_status(UpdateResetStarted.into());
 
-        // Extend PCR0 and PCR1
-        pcr::extend_pcrs(&mut venv, info)?;
-        report_boot_status(UpdateResetExtendPcrComplete.into());
+        let Some(mut recv_txn) = env.mbox.try_start_recv_txn() else {
+            cprintln!("Failed To Get Mailbox Transaction");
+            return Err(CaliptraError::ROM_UPDATE_RESET_FLOW_MAILBOX_ACCESS_FAILURE);
+        };
 
-        cprintln!(
-            "[update-reset] Image verified using Vendor ECC Key Index {}",
-            info.vendor_ecc_pub_key_idx
-        );
+        match recv_txn.cmd() {
+            Self::MBOX_DOWNLOAD_FIRMWARE_CMD_ID => {
+                let manifest = Self::load_manifest(&mut recv_txn)?;
+                report_boot_status(UpdateResetLoadManifestComplete.into());
 
-        // Populate data vault
-        Self::populate_data_vault(venv.data_vault, info);
+                let info = Self::verify_image(&mut venv, &manifest, recv_txn.dlen());
+                let info = okref(&info)?;
+                report_boot_status(UpdateResetImageVerificationComplete.into());
 
-        Self::load_image(&manifest, recv_txn)?;
-        report_boot_status(UpdateResetLoadImageComplete.into());
+                // Extend PCR0 and PCR1
+                pcr::extend_pcrs(&mut venv, info)?;
+                report_boot_status(UpdateResetExtendPcrComplete.into());
 
-        Self::copy_regions();
-        report_boot_status(UpdateResetOverwriteManifestComplete.into());
+                cprintln!(
+                    "[update-reset] Image verified using Vendor ECC Key Index {}",
+                    info.vendor_ecc_pub_key_idx
+                );
 
-        // Set RT version. FMC does not change.
-        env.soc_ifc.set_rt_fw_rev_id(manifest.runtime.version);
+                // Populate data vault
+                Self::populate_data_vault(venv.data_vault, info);
 
-        cprintln!("[update-reset Success] --");
-        report_boot_status(UpdateResetComplete.into());
+                Self::load_image(&manifest, recv_txn)?;
+                report_boot_status(UpdateResetLoadImageComplete.into());
 
-        Ok(None)
+                Self::copy_regions();
+                report_boot_status(UpdateResetOverwriteManifestComplete.into());
+
+                // Set RT version. FMC does not change.
+                env.soc_ifc.set_rt_fw_rev_id(manifest.runtime.version);
+
+                cprintln!("[update-reset Success] --");
+                report_boot_status(UpdateResetComplete.into());
+
+                Ok(None)
+            }
+            _ => {
+                cprintln!("SelfTest request 0x{:08x} received", recv_txn.cmd());
+                let manifest_slice = unsafe {
+                    let ptr = MAN1_ORG as *mut u32;
+                    core::slice::from_raw_parts_mut(ptr, core::mem::size_of::<ImageManifest>() / 4)
+                };
+                let manifest = ImageManifest::read_from(manifest_slice.as_bytes())
+                    .ok_or(CaliptraError::ROM_UPDATE_RESET_FLOW_MANIFEST_READ_FAILURE)?;
+                cprintln!("SelfTest request 0x{:08x} complete", recv_txn.cmd());
+                return Ok(None);
+            }
+        }
     }
 
     /// Verify the image

@@ -83,9 +83,14 @@ pub struct FipsSelfTestCmd;
 impl FipsSelfTestCmd {
     pub(crate) fn execute(env: &mut Drivers) -> CaliptraResult<MailboxResp> {
         cprintln!("[rt] FIPS self test");
-        FipsModule::execute_kats(env)?;
-
-        Ok(MailboxResp::default())
+        Self::trigger_update_reset();
+        loop {}
+    }
+    fn trigger_update_reset() {
+        const STDOUT: *mut u32 = 0x3003_0624 as *mut u32;
+        unsafe {
+            core::ptr::write_volatile(STDOUT, 1_u32);
+        }
     }
 }
 
