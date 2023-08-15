@@ -1,6 +1,7 @@
 // Licensed under the Apache-2.0 license
 
 use caliptra_common::cprintln;
+use caliptra_common::{FMC_ORG, RUNTIME_ORG};
 use caliptra_drivers::CaliptraError;
 use caliptra_drivers::CaliptraResult;
 use caliptra_drivers::Ecc384;
@@ -12,7 +13,9 @@ use caliptra_drivers::Sha384Acc;
 use caliptra_kat::{Ecc384Kat, Hmac384Kat, Sha256Kat, Sha384AccKat, Sha384Kat};
 use caliptra_registers::mbox::enums::MboxStatusE;
 
+use crate::MemoryRegions;
 use crate::{Drivers, FipsVersionResp, MailboxResp, MailboxRespHeader};
+use zerocopy::AsBytes;
 
 pub struct FipsModule;
 
@@ -90,6 +93,34 @@ impl FipsSelfTestCmd {
         const STDOUT: *mut u32 = 0x3003_0624 as *mut u32;
         unsafe {
             core::ptr::write_volatile(STDOUT, 1_u32);
+        }
+    }
+    fn copy_image_to_mbox(env: &mut Drivers) {
+        let mbox_ptr = MBOX_ORG as *mut u8;
+        let man1_ptr = MAN1_ORG as *const u8;
+
+        let fmc_org = FMC_ORG as *mut u8;
+        let rt_org = RUNTIME_ORG as *const u8;
+
+        unsafe {
+            let mut offset = 0;
+            MemoryRegions::copy_bytes(
+                man1_ptr,
+                mbox_ptr.add(offset),
+                env.manifest.as_bytes().len(),
+            );
+            offset += env.manifest.as_bytes().len();
+            MemoryRegions::copy_bytes(
+                fmc_org,
+                mbox_ptr.add(offset),
+                env.manifest.fmc.size as usize,
+            );
+            offset += env.manifest.fmc.size as usize;
+            MemoryRegions::copy_bytes(
+                rt_org,
+                mbox_ptr.add(offset),
+                env.manifest.runtime.size as usize,
+            );
         }
     }
 }
