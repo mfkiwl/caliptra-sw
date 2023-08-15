@@ -92,13 +92,24 @@ impl UpdateResetFlow {
                 Ok(None)
             }
             _ => {
-                cprintln!("SelfTest request 0x{:08x} received", recv_txn.cmd());
+                cprintln!(
+                    "SelfTest request 0x{:08x} received, dlen = {}",
+                    recv_txn.cmd(),
+                    recv_txn.dlen()
+                );
                 let manifest_slice = unsafe {
                     let ptr = MAN1_ORG as *mut u32;
                     core::slice::from_raw_parts_mut(ptr, core::mem::size_of::<ImageManifest>() / 4)
                 };
                 let manifest = ImageManifest::read_from(manifest_slice.as_bytes())
                     .ok_or(CaliptraError::ROM_UPDATE_RESET_FLOW_MANIFEST_READ_FAILURE)?;
+
+                let len = manifest.as_bytes().len()
+                    + manifest.fmc.size as usize
+                    + manifest.runtime.size as usize;
+
+                let info = Self::verify_image(&mut venv, &manifest, len as u32);
+                let info = okref(&info)?;
                 cprintln!("SelfTest request 0x{:08x} complete", recv_txn.cmd());
                 return Ok(None);
             }

@@ -252,6 +252,12 @@ impl MemoryRegions {
         self.pcr_log.fill(0);
         self.fuse_log.fill(0);
     }
+    /// # Safety
+    pub unsafe fn copy_bytes(src: *const u8, dst: *mut u8, count: usize) {
+        for i in 0..count {
+            *dst.add(i) = *src.add(i);
+        }
+    }
 }
 
 // Helper function to create a mutable slice from a memory region
