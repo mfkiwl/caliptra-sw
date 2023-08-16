@@ -108,10 +108,16 @@ impl UpdateResetFlow {
                     + manifest.fmc.size as usize
                     + manifest.runtime.size as usize;
 
-                let info = Self::verify_image(&mut venv, &manifest, len as u32);
-                let info = okref(&info)?;
-                cprintln!("SelfTest request 0x{:08x} complete", recv_txn.cmd());
-                return Ok(None);
+                match Self::verify_image(&mut venv, &manifest, len as u32) {
+                    Err(e) => {
+                        Err(e)    
+                    }
+                    Ok(_) => {
+                        cprintln!("SelfTest request 0x{:08x} complete", recv_txn.cmd());
+                        Ok(None)
+                    }
+                }
+                       
             }
         }
     }
